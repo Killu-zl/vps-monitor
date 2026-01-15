@@ -232,11 +232,12 @@ format_bytes() {
 # Получаем начальные значения трафика
 read rx_prev tx_prev <<< $(get_network_stats)
 
-# Массивы для сглаживания значений (храним последние 3 измерения)
-cpu_history=(0 0 0)
-rx_history=(0 0 0)
-tx_history=(0 0 0)
+# Массивы для сглаживания значений (храним последние 10 измерений для лучшего усреднения)
+cpu_history=(0 0 0 0 0 0 0 0 0 0)
+rx_history=(0 0 0 0 0 0 0 0 0 0)
+tx_history=(0 0 0 0 0 0 0 0 0 0)
 history_index=0
+history_size=10
 
 # Анимация спиннера
 spinner_frames=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
@@ -298,17 +299,28 @@ while true; do
     else
         # Используем top но с правильным парсингом
         cpu_line=$(top -bn2 -d1 | grep "Cpu(s)" | tail -1)
-        # Берем %us (user) + %sy (system) + %ni (nice) и убираем % явно
-        cpu_us=$(echo "$cpu_line" | awk '{print $2}' | sed 's/%us,//' | sed 's/%//')
-        cpu_sy=$(echo "$cpu_line" | awk '{print $4}' | sed 's/%sy,//' | sed 's/%//')
-        cpu_ni=$(echo "$cpu_line" | awk '{print $6}' | sed 's/%ni,//' | sed 's/%//')
+        # Берем %us (user) + %sy (system) + %ni (nice) и убираем % полностью
+        cpu_us=$(echo "$cpu_line" | awk '{print $2}' | tr -d '%' | sed 's/us,//' | sed 's/,//')
+        cpu_sy=$(echo "$cpu_line" | awk '{print $4}' | tr -d '%' | sed 's/sy,//' | sed 's/,//')
+        cpu_ni=$(echo "$cpu_line" | awk '{print $6}' | tr -d '%' | sed 's/ni,//' | sed 's/,//')
+        
+        # Убедимся что это числа, иначе 0
+        [ -z "$cpu_us" ] && cpu_us=0
+        [ -z "$cpu_sy" ] && cpu_sy=0
+        [ -z "$cpu_ni" ] && cpu_ni=0
         
         cpu_current=$(awk "BEGIN {printf \"%.1f\", $cpu_us + $cpu_sy + $cpu_ni}")
     fi
     
     # Добавляем в историю и вычисляем среднее
     cpu_history[$history_index]=$cpu_current
-    cpu_usage=$(awk "BEGIN {printf \"%.1f\", (${cpu_history[0]} + ${cpu_history[1]} + ${cpu_history[2]}) / 3}")
+    
+    # Считаем среднее за последние измерения
+    cpu_sum=0
+    for val in "${cpu_history[@]}"; do
+        cpu_sum=$(awk "BEGIN {printf \"%.1f\", $cpu_sum + $val}")
+    done
+    cpu_usage=$(awk "BEGIN {printf \"%.1f\", $cpu_sum / $history_size}")
     
     # Определяем цвет в зависимости от загрузки
     cpu_color=$(get_load_color $cpu_usage)
@@ -368,9 +380,15 @@ while true; do
     rx_history[$history_index]=$rx_diff
     tx_history[$history_index]=$tx_diff
     
-    # Вычисляем среднее за последние 3 измерения
-    rx_avg=$(( (${rx_history[0]} + ${rx_history[1]} + ${rx_history[2]}) / 3 ))
-    tx_avg=$(( (${tx_history[0]} + ${tx_history[1]} + ${tx_history[2]}) / 3 ))
+    # Вычисляем среднее за последние измерения
+    rx_sum=0
+    tx_sum=0
+    for i in "${!rx_history[@]}"; do
+        rx_sum=$((rx_sum + ${rx_history[$i]}))
+        tx_sum=$((tx_sum + ${tx_history[$i]}))
+    done
+    rx_avg=$((rx_sum / history_size))
+    tx_avg=$((tx_sum / history_size))
     
     rx_speed=$(format_bytes $rx_avg)
     tx_speed=$(format_bytes $tx_avg)
@@ -417,8 +435,8 @@ while true; do
     rx_prev=$rx_curr
     tx_prev=$tx_curr
     
-    # Циклически обновляем индекс истории (0 -> 1 -> 2 -> 0)
-    history_index=$(( (history_index + 1) % 3 ))
+    # Циклически обновляем индекс истории
+    history_index=$(( (history_index + 1) % history_size ))
     
     # Обновляем индекс спиннера
     spinner_index=$(( (spinner_index + 1) % 10 ))
