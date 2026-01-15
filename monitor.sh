@@ -1,7 +1,6 @@
 #!/bin/bash
 # VPS Monitor - Real-time VPS monitoring tool
 # by @killu_zl
-# https://github.com/killu_zl/vps-monitor
 
 # Цвета для вывода
 GREEN='\033[0;32m'
@@ -287,18 +286,19 @@ while true; do
     fi
     echo ""
     
-    # Заголовок с временем
+    # Заголовок с временем (фиксированная ширина)
+    current_time=$(date '+%H:%M:%S')
     echo -e "${BLUE}╔════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${BLUE}║           Мониторинг в реальном времени - $(date '+%H:%M:%S')        ║${NC}"
+    printf "${BLUE}║${NC}           Мониторинг в реальном времени - %-10s      ${BLUE}║${NC}\n" "$current_time"
     echo -e "${BLUE}╚════════════════════════════════════════════════════════════╝${NC}"
     echo ""
     
-    # CPU - используем mpstat если доступен, иначе top
+    # CPU - используем mpstat если доступен, иначе top с одной итерацией
     if command -v mpstat &> /dev/null; then
         cpu_current=$(mpstat 1 1 | awk '/Average/ {print 100 - $NF}')
     else
-        # Используем top но с правильным парсингом
-        cpu_line=$(top -bn2 -d1 | grep "Cpu(s)" | tail -1)
+        # Используем top с одной итерацией для скорости
+        cpu_line=$(top -bn1 | grep "Cpu(s)" | head -1)
         # Берем %us (user) + %sy (system) + %ni (nice) и убираем % полностью
         cpu_us=$(echo "$cpu_line" | awk '{print $2}' | tr -d '%' | sed 's/us,//' | sed 's/,//')
         cpu_sy=$(echo "$cpu_line" | awk '{print $4}' | tr -d '%' | sed 's/sy,//' | sed 's/,//')
