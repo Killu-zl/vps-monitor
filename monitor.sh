@@ -2,6 +2,13 @@
 # VPS Monitor - Real-time VPS monitoring tool
 # by @killu_zl
 
+# Проверка на команду обновления
+if [ "$1" = "--update" ] || [ "$1" = "-u" ]; then
+    echo "🔄 Обновление VPS Monitor..."
+    curl -sSL https://raw.githubusercontent.com/Killu-zl/vps-monitor/main/install.sh | sudo bash
+    exit 0
+fi
+
 # Цвета для вывода
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
