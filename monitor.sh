@@ -1,6 +1,7 @@
 #!/bin/bash
 # VPS Monitor - Real-time VPS monitoring tool
 # by @killu_zl
+# https://github.com/killu_zl/vps-monitor
 
 # Цвета для вывода
 GREEN='\033[0;32m'
@@ -9,6 +10,20 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
+
+# Функция для выбора цвета в зависимости от загрузки
+get_load_color() {
+    local load=$1
+    local load_int=${load%.*}
+    
+    if [ $load_int -lt 50 ]; then
+        echo "$GREEN"
+    elif [ $load_int -lt 80 ]; then
+        echo "$YELLOW"
+    else
+        echo "$RED"
+    fi
+}
 
 # Функция для получения информации о CPU
 get_cpu_model() {
@@ -124,6 +139,13 @@ get_uptime_formatted() {
     uptime -p | sed 's/up //'
 }
 
+# Функция для получения количества сетевых соединений
+get_network_connections() {
+    local tcp_count=$(ss -tan | grep -c ESTAB 2>/dev/null || netstat -tan 2>/dev/null | grep -c ESTABLISHED)
+    local udp_count=$(ss -u -a | tail -n +2 | wc -l 2>/dev/null || netstat -uan 2>/dev/null | tail -n +3 | wc -l)
+    echo "$tcp_count $udp_count"
+}
+
 # Скрыть курсор
 tput civis
 
@@ -210,6 +232,16 @@ format_bytes() {
 # Получаем начальные значения трафика
 read rx_prev tx_prev <<< $(get_network_stats)
 
+# Массивы для сглаживания значений (храним последние 3 измерения)
+cpu_history=(0 0 0)
+rx_history=(0 0 0)
+tx_history=(0 0 0)
+history_index=0
+
+# Анимация спиннера
+spinner_frames=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
+spinner_index=0
+
 # Получаем конфигурацию сервера (один раз)
 echo -e "${CYAN}Загрузка информации о сервере...${NC}"
 CPU_MODEL=$(get_cpu_model)
@@ -262,7 +294,7 @@ while true; do
     
     # CPU - используем mpstat если доступен, иначе top
     if command -v mpstat &> /dev/null; then
-        cpu_usage=$(mpstat 1 1 | awk '/Average/ {print 100 - $NF}')
+        cpu_current=$(mpstat 1 1 | awk '/Average/ {print 100 - $NF}')
     else
         # Используем top но с правильным парсингом
         cpu_line=$(top -bn2 -d1 | grep "Cpu(s)" | tail -1)
@@ -271,19 +303,26 @@ while true; do
         cpu_sy=$(echo "$cpu_line" | awk '{print $4}' | sed 's/%sy,//' | sed 's/%//')
         cpu_ni=$(echo "$cpu_line" | awk '{print $6}' | sed 's/%ni,//' | sed 's/%//')
         
-        cpu_usage=$(awk "BEGIN {printf \"%.1f\", $cpu_us + $cpu_sy + $cpu_ni}")
+        cpu_current=$(awk "BEGIN {printf \"%.1f\", $cpu_us + $cpu_sy + $cpu_ni}")
     fi
     
-    echo -e "${GREEN}▶ CPU загрузка:${NC}"
-    printf "  %.1f%%\n" "$cpu_usage"
+    # Добавляем в историю и вычисляем среднее
+    cpu_history[$history_index]=$cpu_current
+    cpu_usage=$(awk "BEGIN {printf \"%.1f\", (${cpu_history[0]} + ${cpu_history[1]} + ${cpu_history[2]}) / 3}")
     
-    # Прогресс-бар для CPU
+    # Определяем цвет в зависимости от загрузки
+    cpu_color=$(get_load_color $cpu_usage)
+    
+    echo -e "${GREEN}▶ CPU загрузка:${NC}"
+    printf "  ${cpu_color}%.1f%%${NC}\n" "$cpu_usage"
+    
+    # Прогресс-бар для CPU с цветом
     cpu_int=${cpu_usage%.*}
     bar_length=$((cpu_int / 5))
     printf "  ["
     for ((i=0; i<20; i++)); do
         if [ $i -lt $bar_length ]; then
-            printf "█"
+            printf "${cpu_color}█${NC}"
         else
             printf "░"
         fi
@@ -295,16 +334,19 @@ while true; do
     mem_info=$(free -m | awk 'NR==2{printf "%.1f %.1f %.1f", $3,$2,($3/$2)*100}')
     read mem_used mem_total mem_percent <<< $mem_info
     
-    echo -e "${GREEN}▶ RAM использование:${NC}"
-    printf "  %.0fMB / %.0fMB (%.1f%%)\n" "$mem_used" "$mem_total" "$mem_percent"
+    # Определяем цвет в зависимости от загрузки
+    mem_color=$(get_load_color $mem_percent)
     
-    # Прогресс-бар для RAM
+    echo -e "${GREEN}▶ RAM использование:${NC}"
+    printf "  ${mem_color}%.0fMB / %.0fMB (%.1f%%)${NC}\n" "$mem_used" "$mem_total" "$mem_percent"
+    
+    # Прогресс-бар для RAM с цветом
     mem_int=${mem_percent%.*}
     bar_length=$((mem_int / 5))
     printf "  ["
     for ((i=0; i<20; i++)); do
         if [ $i -lt $bar_length ]; then
-            printf "█"
+            printf "${mem_color}█${NC}"
         else
             printf "░"
         fi
@@ -322,13 +364,24 @@ while true; do
     if [ $rx_diff -lt 0 ]; then rx_diff=0; fi
     if [ $tx_diff -lt 0 ]; then tx_diff=0; fi
     
-    rx_speed=$(format_bytes $rx_diff)
-    tx_speed=$(format_bytes $tx_diff)
+    # Добавляем в историю для сглаживания
+    rx_history[$history_index]=$rx_diff
+    tx_history[$history_index]=$tx_diff
+    
+    # Вычисляем среднее за последние 3 измерения
+    rx_avg=$(( (${rx_history[0]} + ${rx_history[1]} + ${rx_history[2]}) / 3 ))
+    tx_avg=$(( (${tx_history[0]} + ${tx_history[1]} + ${tx_history[2]}) / 3 ))
+    
+    rx_speed=$(format_bytes $rx_avg)
+    tx_speed=$(format_bytes $tx_avg)
     
     # Получаем имя интерфейса для отображения
     net_interface=$(get_network_interface)
     
-    echo -e "${GREEN}▶ Сетевой трафик ($net_interface):${NC}"
+    # Получаем анимированный спиннер
+    spinner="${spinner_frames[$spinner_index]}"
+    
+    echo -e "${GREEN}▶ Сетевой трафик ($net_interface): ${CYAN}${spinner}${NC}"
     printf "  ${YELLOW}↓${NC} Входящий:  %-15s\n" "$rx_speed"
     printf "  ${RED}↑${NC} Исходящий: %-15s\n" "$tx_speed"
     echo ""
@@ -340,9 +393,20 @@ while true; do
     printf "  %s / %s (%s)\n" "$disk_used" "$disk_total" "$disk_percent"
     echo ""
     
+    # Сетевые соединения
+    read tcp_conn udp_conn <<< $(get_network_connections)
+    echo -e "${GREEN}▶ Сетевые соединения:${NC}"
+    printf "  TCP: ${CYAN}%s${NC}  |  UDP: ${CYAN}%s${NC}\n" "$tcp_conn" "$udp_conn"
+    echo ""
+    
     # Топ процессов по CPU
     echo -e "${GREEN}▶ Топ-3 процесса по CPU:${NC}"
     ps aux --sort=-%cpu | awk 'NR>1{printf "  %-25s %5s%%\n", substr($11,1,25), $3}' | head -3
+    echo ""
+    
+    # Топ процессов по RAM
+    echo -e "${GREEN}▶ Топ-3 процесса по RAM:${NC}"
+    ps aux --sort=-%mem | awk 'NR>1{printf "  %-25s %5s%%\n", substr($11,1,25), $4}' | head -3
     echo ""
     echo -e "${CYAN}Ctrl+C для выхода | Для фона: tmux new -s monitor${NC}"
     
@@ -352,6 +416,12 @@ while true; do
     # Обновляем предыдущие значения
     rx_prev=$rx_curr
     tx_prev=$tx_curr
+    
+    # Циклически обновляем индекс истории (0 -> 1 -> 2 -> 0)
+    history_index=$(( (history_index + 1) % 3 ))
+    
+    # Обновляем индекс спиннера
+    spinner_index=$(( (spinner_index + 1) % 10 ))
     
     # Пауза 1 секунда
     sleep 1
