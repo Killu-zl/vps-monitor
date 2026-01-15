@@ -5,7 +5,7 @@
 ## Установка
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/YOUR_USERNAME/vps-monitor/main/install.sh | sudo bash
+curl -sSL https://raw.githubusercontent.com/Killu-zl/vps-monitor/main/install.sh | sudo bash
 ```
 
 ## Запуск
@@ -27,4 +27,4 @@ monitor
 
 ---
 
-by [@killu_zl](https://github.com/killu_zl)
+by. @killu_zl
