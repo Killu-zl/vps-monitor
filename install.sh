@@ -11,9 +11,18 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
-# Копируем скрипт в /root
-echo "📁 Копирование скрипта в /root..."
-cp monitor.sh /root/monitor.sh
+# GitHub репозиторий
+GITHUB_REPO="https://raw.githubusercontent.com/Killu-zl/vps-monitor/main"
+
+# Скачиваем monitor.sh
+echo "📥 Скачивание скрипта с GitHub..."
+if ! curl -sSL "${GITHUB_REPO}/monitor.sh" -o /root/monitor.sh; then
+    echo "❌ Ошибка: Не удалось скачать monitor.sh"
+    echo "Проверьте подключение к интернету и URL репозитория"
+    exit 1
+fi
+
+# Делаем исполняемым
 chmod +x /root/monitor.sh
 
 # Создаем символическую ссылку в /usr/local/bin для запуска из любой директории
@@ -25,7 +34,6 @@ echo "✅ Установка завершена!"
 echo ""
 echo "Использование:"
 echo "  monitor          - запуск из любой директории"
-echo "  /root/monitor.sh - прямой запуск"
 echo ""
 echo "Для удаления:"
 echo "  rm /root/monitor.sh /usr/local/bin/monitor"
