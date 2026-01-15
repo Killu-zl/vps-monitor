@@ -1,7 +1,6 @@
 #!/bin/bash
 # VPS Monitor - Real-time VPS monitoring tool
 # by @killu_zl
-# https://github.com/killu_zl/vps-monitor
 
 # Цвета для вывода
 GREEN='\033[0;32m'
@@ -74,15 +73,32 @@ get_disk_size() {
     df -h / | awk 'NR==2{print $2}'
 }
 
-# Функция для получения IP адреса
-get_ip_address() {
-    # Пробуем получить публичный IP
-    ip_addr=$(curl -s --max-time 2 ifconfig.me 2>/dev/null || curl -s --max-time 2 icanhazip.com 2>/dev/null || echo "N/A")
-    if [ "$ip_addr" = "N/A" ]; then
-        # Если не получилось, берем локальный IP
-        ip_addr=$(ip route get 1 | awk '{print $(NF-2);exit}' 2>/dev/null || echo "N/A")
+# Функция для получения IP адресов
+get_ip_addresses() {
+    local ipv4=""
+    local ipv6=""
+    
+    # Получаем IPv4
+    ipv4=$(curl -4 -s --max-time 2 ifconfig.me 2>/dev/null || curl -4 -s --max-time 2 icanhazip.com 2>/dev/null)
+    
+    # Получаем IPv6
+    ipv6=$(curl -6 -s --max-time 2 ifconfig.me 2>/dev/null || curl -6 -s --max-time 2 icanhazip.com 2>/dev/null)
+    
+    # Если IPv4 не получен, пробуем через ip route
+    if [ -z "$ipv4" ]; then
+        ipv4=$(ip -4 route get 1.1.1.1 2>/dev/null | grep -oP 'src \K\S+')
     fi
-    echo "$ip_addr"
+    
+    # Формируем вывод
+    if [ -n "$ipv4" ] && [ -n "$ipv6" ]; then
+        echo "$ipv4 / $ipv6"
+    elif [ -n "$ipv4" ]; then
+        echo "$ipv4"
+    elif [ -n "$ipv6" ]; then
+        echo "$ipv6"
+    else
+        echo "N/A"
+    fi
 }
 
 # Функция для получения информации о сети/хостинге
@@ -200,11 +216,12 @@ CPU_MODEL=$(get_cpu_model)
 CPU_CORES=$(get_cpu_cores)
 TOTAL_RAM=$(get_total_ram)
 DISK_SIZE=$(get_disk_size)
-IP_ADDR=$(get_ip_address)
+IP_ADDR=$(get_ip_addresses)
 UPTIME=$(get_uptime_formatted)
 
-# Получаем информацию о сети/хостинге
-IFS='|' read -r ORGANIZATION LOCATION REGION COUNTRY <<< $(get_network_info "$IP_ADDR")
+# Получаем информацию о сети/хостинге (используем первый IPv4 для определения)
+IP_FOR_LOOKUP=$(echo "$IP_ADDR" | awk '{print $1}')
+IFS='|' read -r ORGANIZATION LOCATION REGION COUNTRY <<< $(get_network_info "$IP_FOR_LOOKUP")
 
 sleep 1
 
