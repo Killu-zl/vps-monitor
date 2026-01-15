@@ -147,8 +147,9 @@ get_uptime_formatted() {
 
 # Функция для получения количества сетевых соединений
 get_network_connections() {
-    local tcp_count=$(ss -tan | grep -c ESTAB 2>/dev/null || netstat -tan 2>/dev/null | grep -c ESTABLISHED)
-    local udp_count=$(ss -u -a | tail -n +2 | wc -l 2>/dev/null || netstat -uan 2>/dev/null | tail -n +3 | wc -l)
+    # Быстрый подсчет без полного парсинга
+    local tcp_count=$(ss -tan 2>/dev/null | grep -c ESTAB || echo 0)
+    local udp_count=$(ss -uant 2>/dev/null | tail -n +2 | wc -l || echo 0)
     echo "$tcp_count $udp_count"
 }
 
@@ -249,6 +250,15 @@ history_size=10
 spinner_frames=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
 spinner_index=0
 
+# Счетчик для кэширования тяжелых операций
+cache_counter=0
+cache_interval=5  # Обновлять тяжелые данные раз в 5 секунд
+
+# Кэшированные данные
+cached_tcp_conn=""
+cached_udp_conn=""
+cached_top_processes=""
+
 # Получаем конфигурацию сервера (один раз)
 echo -e "${CYAN}Загрузка информации о сервере...${NC}"
 CPU_MODEL=$(get_cpu_model)
@@ -293,10 +303,10 @@ while true; do
     fi
     echo ""
     
-    # Заголовок с временем (фиксированная ширина)
+    # Заголовок с временем (фиксированная ширина без printf)
     current_time=$(date '+%H:%M:%S')
     echo -e "${BLUE}╔════════════════════════════════════════════════════════════╗${NC}"
-    printf "${BLUE}║${NC}           Мониторинг в реальном времени - %-10s      ${BLUE}║${NC}\n" "$current_time"
+    echo -e "${BLUE}║      Мониторинг в реальном времени - ${current_time}           ║${NC}"
     echo -e "${BLUE}╚════════════════════════════════════════════════════════════╝${NC}"
     echo ""
     
@@ -418,20 +428,28 @@ while true; do
     printf "  %s / %s (%s)\n" "$disk_used" "$disk_total" "$disk_percent"
     echo ""
     
-    # Сетевые соединения
-    read tcp_conn udp_conn <<< $(get_network_connections)
+    # Сетевые соединения (обновляем раз в 5 секунд)
+    if [ $cache_counter -eq 0 ]; then
+        read cached_tcp_conn cached_udp_conn <<< $(get_network_connections)
+    fi
     echo -e "${GREEN}▶ Сетевые соединения:${NC}"
-    printf "  TCP: ${CYAN}%s${NC}  |  UDP: ${CYAN}%s${NC}\n" "$tcp_conn" "$udp_conn"
+    printf "  TCP: ${CYAN}%s${NC}  |  UDP: ${CYAN}%s${NC}\n" "$cached_tcp_conn" "$cached_udp_conn"
     echo ""
+    
+    # Топ процессов (обновляем раз в 5 секунд)
+    if [ $cache_counter -eq 0 ]; then
+        cached_top_cpu=$(ps aux --sort=-%cpu | awk 'NR>1{printf "  %-25s %5s%%\n", substr($11,1,25), $3}' | head -3)
+        cached_top_mem=$(ps aux --sort=-%mem | awk 'NR>1{printf "  %-25s %5s%%\n", substr($11,1,25), $4}' | head -3)
+    fi
     
     # Топ процессов по CPU
     echo -e "${GREEN}▶ Топ-3 процесса по CPU:${NC}"
-    ps aux --sort=-%cpu | awk 'NR>1{printf "  %-25s %5s%%\n", substr($11,1,25), $3}' | head -3
+    echo "$cached_top_cpu"
     echo ""
     
     # Топ процессов по RAM
     echo -e "${GREEN}▶ Топ-3 процесса по RAM:${NC}"
-    ps aux --sort=-%mem | awk 'NR>1{printf "  %-25s %5s%%\n", substr($11,1,25), $4}' | head -3
+    echo "$cached_top_mem"
     echo ""
     echo -e "${CYAN}Ctrl+C для выхода | Для фона: tmux new -s monitor${NC}"
     
@@ -447,6 +465,9 @@ while true; do
     
     # Обновляем индекс спиннера
     spinner_index=$(( (spinner_index + 1) % 10 ))
+    
+    # Обновляем счетчик кэша (0-4, потом снова 0)
+    cache_counter=$(( (cache_counter + 1) % cache_interval ))
     
     # Пауза 1 секунда
     sleep 1
