@@ -1,0 +1,13 @@
+# Временные файлы
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Логи
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.iml
